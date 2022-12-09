@@ -1,28 +1,20 @@
+use log::{debug, error, info, log_enabled, Level};
 use std::io;
 use std::io::Read;
 
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag};
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Contexts<'a>(Vec<Tag<'a>>);
+mod contexts;
+pub use contexts::*;
 
-impl<'a> Contexts<'a> {
-    fn new() -> Self {
-        Contexts(vec![])
-    }
+use env_logger::Builder;
+use log::LevelFilter;
 
-    fn push_tag(&mut self, tag: Tag<'a>) {
-        self.0.push(tag);
-    }
-
-    fn pop_tag(&mut self, tag: Tag<'a>) {
-        if let Some(pos) = self.0.iter().rposition(|elem| elem == &tag) {
-            self.0.remove(pos);
-        }
-    }
-}
+use polars::frame::DataFrame;
 
 fn main() -> io::Result<()> {
+    Builder::new().filter_level(LevelFilter::Info).init();
+
     let mut markdown_input = String::new();
     let mut stdin = io::stdin();
     stdin.read_to_string(&mut markdown_input)?;
@@ -34,33 +26,79 @@ fn main() -> io::Result<()> {
         .into_iter()
         .map(|event| match event {
             Event::Start(ref tag) => {
-                contexts.push_tag(tag.clone());
+                contexts.enter_context(tag.clone());
                 (contexts.clone(), event)
             }
             Event::End(ref tag) => {
-                contexts.pop_tag(tag.clone());
+                contexts.quit_context(tag.clone());
                 (contexts.clone(), event)
             }
             _ => (contexts.clone(), event),
         })
         .collect::<Vec<(Contexts, Event)>>();
 
-    let tables = events_in_contexts
+    let mut tables = events_in_contexts
         .iter()
-        .any(|(context, _event)| context.0.iter().any(|e| matches!(e, Tag::Table(_))));
-
-    let h2 = events_in_contexts
-        .iter()
-        .any(|(context, event)| {
+        .filter(|(context, _event)| {
             context
-                .0
+                .contexts()
                 .iter()
-                .any(|e| matches!(e, Tag::Heading(HeadingLevel::H2, _, _)))
-                && event == &Event::Text("Définition".into())
-        });
+                .any(|e| matches!(e, Tag::Table(_)))
+        })
+        .map(|(_, event)| event)
+        .collect::<Vec<&Event>>();
 
-    println!("has table {:?}", tables);
-    println!("has définition {:?}", h2);
+    // il faudrait split sur start table ou table end ! (s'il ya plusieures tables dans le fichier)
+
+    let x = tables
+        .split(|elem| {
+            matches!(elem, Event::Start(Tag::Table(_)))
+        })
+        .collect::<Vec<_>>()
+        .iter()
+        .map(|e| {
+            let mut header: Vec<String> = vec![];
+
+            e.iter().filter(||)
+            headers
+        })
+        .collect::<Vec<Vec<String>>>();
+
+    println!("{:?}", x);
+
+    // for t in tables {
+    //     let mut df = DataFrame::default();
+
+    //     println!("T {:?}", t);
+
+    // }
+
+    let has_table = events_in_contexts.iter().any(|(context, _event)| {
+        context
+            .contexts()
+            .iter()
+            .any(|e| matches!(e, Tag::Table(_)))
+    });
+
+    let h2 = events_in_contexts.iter().any(|(context, event)| {
+        context
+            .contexts()
+            .iter()
+            .any(|e| matches!(e, Tag::Heading(HeadingLevel::H2, _, _)))
+            && event == &Event::Text("Définition".into())
+    });
+
+    if has_table {
+        info!("has table {:?}", has_table);
+    } else {
+        error!("has table {:?}", has_table);
+    }
+
+    if h2 {
+        info!("has définition {:?}", h2);
+    } else {
+        error!("has définition {:?}", h2);
+    }
 
     Ok(())
 }
